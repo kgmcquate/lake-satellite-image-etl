@@ -3,12 +3,22 @@ from dataclasses import dataclass
 import datetime
 import pandas as pd
 
+
+
 from urllib.parse import urlencode
 import json
 import requests
 import rasterio
 import os
 import numpy as np
+import math
+import shapely
+import functools
+import io
+from rasterio.io import MemoryFile, DatasetReader
+import geopandas as gpd
+
+from pprint import pprint
 
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
@@ -19,58 +29,196 @@ import zipfile
 from pprint import pprint
 # https://api.nasa.gov/
 
-from typing import ClassVar
+from typing import ClassVar, Callable
 
-data_folder = "data"
+IMAGE_STORAGE_BUCKET = "public-zone-117819748843-us-east-1"
+IMAGE_STORAGE_PREFIX = "water_body_satellite_images/"
+THUMBNAIL_STORAGE_PREFIX = "water_body_satellite_thumbnails/"
+MAX_IMAGE_SIDE_PIXELS = "2048"
+
+
+
+def apply_crs_to_shapely(shape: shapely.Polygon, crs_data):
+    from fiona.crs import from_epsg
+    return [
+        json.loads(
+            gpd.GeoDataFrame(
+                {'geometry': shape}, 
+                index=[0], 
+                crs=from_epsg(4326)
+            )
+            .to_crs(crs=crs_data)
+            .to_json()
+        )
+        ['features'][0]['geometry']
+    ]
+
+@dataclass
+class ImageBand:
+    band: str
+    color_name: str
+    pixel_value_factor: float
+    pixel_value_offset: float
+    # pixel_value_transform: Callable = lambda x: x  # how to transform pixel values for all bands
 
 @dataclass
 class GoogleEarthImageLayer:
-    band: str
-    color_name: str
-
-    def __post_init__(self):
-        self.zip_filename = os.path.join(data_folder, f"{self.band}.zip")
-
-    def get_image(self, ee_image: ee.Image, download_props: dict):
-        if "image" in download_props.keys():
-            del download_props["image"]
-
-        print(download_props)
-        task = ee.batch.Export.image.toDrive(
-            image=ee_image,
-            fileNamePrefix=self.band,
-            **download_props
-        )
-
-        task.start()
-
-        url = ee_image.select(self.band).getDownloadURL(download_props)
-        
-        r = requests.get(url, stream=True)
-
-        # filenameZip = band+'.zip'
-        # filenameTif = band+'.tif'
-
-        # unzip and write the tif file, then remove the original zip file
-        with open(self.zip_filename, "wb") as fd:
-            for chunk in r.iter_content(chunk_size=1024):
-                fd.write(chunk)
-
-        image_filename = f"download.{self.band}.tif"
-
-        with zipfile.ZipFile(self.zip_filename, 'r') as f:
-            f.extract(image_filename)
-
-        with rasterio.open(image_filename) as src:
-            self.image = src
-
-        return self.image
-
+    band: ImageBand
+    image: DatasetReader = None
+    image_array: np.ndarray = None
+    clipped_image: DatasetReader = None
 
 
 @dataclass
+class GoogleEarthImageReference:
+    ee_id: str
+    waterbody_id: int
+    captured_ts: datetime.datetime
+    properties: str
+    filename: str
+
+@dataclass
 class GoogleEarthImage:
+    query: "GoogleEarthImageQuery"
+    ee_id: str
+    captured_ts: datetime.datetime
+    properties: dict
+    ee_image: ee.Image = None
+    layers: list[GoogleEarthImageLayer] = None
+    filename: str = None
+
+    def __post_init__(self):
+        self.filename = f"{self.ee_id}/{self.query.id}_{self.captured_ts.strftime('%Y%M%d%H%m%S')}.tif"
+
+        self.ee_image = (
+            ee.Image(self.ee_id)
+            .select(opt_selectors=[b.band for b in self.query.bands], opt_names=[b.color_name for b in self.query.bands])
+            # Values from https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2
+            # .multiply(0.0000275)
+            # .add(-0.2)
+        )
+
+        self.layers = [
+            GoogleEarthImageLayer(band)
+            for band in self.query.bands
+        ]
+
+
+    def download_layers(self):
+
+        download_props = {
+            # 'scale': meters_per_pixel, # meters per pixel
+            'crs': 'EPSG:4326',
+            'fileFormat': 'GeoTIFF',
+            'region': self.query.bounding_box,
+            'dimensions': MAX_IMAGE_SIDE_PIXELS
+        }
+
+        if "image" in download_props.keys():
+            del download_props["image"]
+
+        url = self.ee_image.getDownloadURL(download_props)
+        
+        img_response = requests.get(url, stream=True)
+
+        with zipfile.ZipFile(io.BytesIO(img_response.content)) as z:
+            # There is a separate tif file for each band
+            assert len(z.namelist()) == len(self.query.bands)
+
+            print(self.properties)
+            
+            for layer in self.layers:
+                image_filename = f"{self.properties['system:index']}.{layer.band.color_name}.tif"
+                img_data = z.read(image_filename)
+
+                with MemoryFile() as memfile:
+                    memfile.write(img_data)
+
+                    layer.image = memfile.open()
+
+                    raw_image_array = layer.image.read()
+                    assert len(raw_image_array) == 1
+
+                    layer.image_array = raw_image_array[0] #
+                    # layer.image_array = (raw_image_array[0] * layer.band.pixel_value_factor) + layer.band.pixel_value_offset
+        
+
+        # self.clipped_image_array =     
+        # out_meta=src.meta.copy() # copy the metadata of the source DEM
+
+        print(self.ee_id)
+        print(self.captured_ts)
+
+    def combine_image_layers(self):
+
+        tif_profile = {}
+        for layer in self.layers:
+            tif_profile.update(layer.image.profile)
+
+        # for layer in self.layers:
+        #     print(layer.image_array)
+
+        tif_profile['count'] = len(self.layers)
+
+        tif_profile['photometric'] = "RGB"
+
+        # The 'tiled' propertty causes issues with the image
+        del tif_profile['tiled']
+
+        self.tif_memfile = MemoryFile()
+
+        with self.tif_memfile.open(**tif_profile) as tif_bytes:
+            for i, layer in enumerate(self.layers):
+                # print(layer)
+                tif_bytes.write(layer.image_array , i + 1)
+
+            from rasterio.plot import show
+            from rasterio.mask import mask
+
+            # show(layer.image)
+            
+            img_coords = apply_crs_to_shapely(self.query.boundary, self.layers[0].image.crs.data)
+
+            self.clipped_image_array, out_transform = mask(dataset=tif_bytes, shapes=img_coords, crop=True) #, nodata=-1
+
+        self.clipped_tif_memfile = MemoryFile()
+
+        with self.clipped_tif_memfile.open(**tif_profile) as tif_bytes:
+            tif_bytes.write(self.clipped_image_array)
+
+            # show(tif_bytes.read(), adjust=True)
+
+    def write_thumbnail_to_s3(self):
+        import boto3
+
+        s3 = boto3.client('s3')
+
+        s3.put_object(Body=self.tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{THUMBNAIL_STORAGE_PREFIX}{self.filename}')
+
+
+    def write_file_to_s3(self):
+        import boto3
+
+        s3 = boto3.client('s3')
+
+        s3.put_object(Body=self.clipped_tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.filename}')
+
+
+    def to_image_reference(self):
+        """This will be stored in the DB"""
+        return GoogleEarthImageReference(
+            ee_id=self.ee_id,
+            waterbody_id=self.query.id,
+            captured_ts=self.captured_ts,
+            properties=json.dumps(self.properties),
+            filename=self.filename
+        )
+
+
+@dataclass
+class GoogleEarthImageQuery:
     id: int
+    areasqkm: float
     min_latitude: float
     max_latitude: float
     min_longitude: float
@@ -79,43 +227,41 @@ class GoogleEarthImage:
     longitude: float
     start_date: datetime.date
     end_date: datetime.date
+    geometry: list[list[list[float]]]
 
-    ee_image: ee.Image = None
     ee_dataset_name: str = "LANDSAT/LC09/C02/T1_L2"
-    layers: tuple[GoogleEarthImageLayer] = (
-        GoogleEarthImageLayer('SR_B4', 'red'), 
-        GoogleEarthImageLayer('SR_B3', 'green'),
-        GoogleEarthImageLayer('SR_B2', 'blue'),
+
+    bands: tuple[ImageBand] = (
+        ImageBand('SR_B4', 'red', 0.0000275, -0.2), 
+        ImageBand('SR_B3', 'green', 0.0000275, -0.2), 
+        ImageBand('SR_B2', 'blue', 0.0000275, -0.2),
     )
+
+    images: tuple[GoogleEarthImage] = None
 
     # api_url: ClassVar[str] = 'earthengine.googleapis.com/v1alpha/projects/earthengine-public/assets/COPERNICUS/S2'
 
     def __post_init__(self):
-
         self.latitude = float(self.latitude)
         self.longitude = float(self.longitude)
 
-        self.width_degrees = abs(self.max_latitude - self.min_latitude)
+        # remove z element
+        for polygon in self.geometry:
+            for point in polygon:
+                del point[2]
 
+        self.width_degrees = abs(self.max_latitude - self.min_latitude)
         self.height_degrees = abs(self.max_longitude - self.min_longitude)
 
-        # The API returns square images, so use the max of the langth and width to get the whole body in the image
-        self.image_side_length_degrees = max(self.width_degrees, self.height_degrees)
-
-        self.bounding_box = [
-                    [self.min_latitude, self.max_longitude],
-                    [self.max_latitude, self.min_longitude],
-                    [self.min_latitude, self.max_longitude],
-                    [self.max_latitude, self.min_longitude], 
-                ]
-        
-
-
-        self.bands = [l.band for l in self.layers]
-
-        self.ee_boundary = ee.Geometry.Polygon(self.bounding_box)
+        self.bounding_box = ee.Geometry.BBox(self.min_longitude, self.min_latitude, self.max_longitude, self.max_latitude) #ee.Geometry.BBox(-121.55, 39.01, -120.57, 39.38)
 
         self.ee_centerpoint = ee.Geometry.Point((self.longitude, self.latitude)) # Note: latitude and longitude are reversed in the args here
+        
+        polygons = [shapely.Polygon(polygon) for polygon in self.geometry]
+
+        self.boundary = functools.reduce(lambda x, y: x.union(y), polygons)
+
+        self.ee_boundary = ee.Geometry.Polygon(self.boundary.__geo_interface__['coordinates'])
 
     
     def get_image_list(self):
@@ -124,79 +270,28 @@ class GoogleEarthImage:
             ee.ImageCollection(self.ee_dataset_name) #dataset catalog: https://developers.google.com/earth-engine/datasets/
             .filterBounds(self.ee_centerpoint)
             .filterDate(ee.Date(self.start_date.isoformat()), ee.Date(self.end_date.isoformat()))
-            .select(*self.bands)
-            
+            .select(selectors=[b.band for b in self.bands], opt_names=[b.color_name for b in self.bands])
             # .addBands(ee.Image.pixelLonLat())
         )
 
-        # pprint(img_collection.limit(5).getInfo())
+        if img_collection.getInfo() is None:
+            raise Exception(f"No images found for {self}")
 
-        self.ee_image = (
-            ee.Image(
-                img_collection
-                #  .sort('system:time_start', False)
-                    .sort('CLOUDY_PIXEL_PERCENTAGE')
-                    .first()
-                    
-            )
-            .multiply(0.0000275) # Values from https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2
-            .add(-0.2)
-        )
+        self.images = []
+        for img in img_collection.getInfo()['features']:
+ 
+            capture_ts_unix = int(int(img['properties']['system:time_start']) / 1000)
 
-        pprint(self.ee_image.getInfo())
-        
-
-    def download_layers(self):
-        download_props = {
-            'scale': 5000, # meters per pixel
-            'crs': 'EPSG:4326',
-            'fileFormat': 'GeoTIFF',
-            'region': self.ee_boundary,
-            # 'dimensions': "5000x5000"
-        }
-
-        for layer in self.layers:
-            layer.get_image(
-                ee_image=self.ee_image, 
-                download_props=download_props
+            self.images.append(
+                GoogleEarthImage(
+                    query=self,
+                    ee_id=img['id'],
+                    captured_ts=datetime.datetime.fromtimestamp(capture_ts_unix),
+                    properties=img['properties']
+                )
             )
 
-    def combine_image_layers(self):
-        
-        # #get the scaling
-        # image = np.array([B2.read(1), B3.read(1), B4.read(1)]).transpose(1,2,0)
-        # p2, p98 = np.percentile(image, (2,98))
-
-        # # use the B2 image as a starting point so that I keep the same parameters
-        # B2_geo = B2.profile
-        # B2_geo.update({'count': 3})
-
-        # with rasterio.open("test.tif", 'w', **B2_geo) as dest:
-        #     dest.write( (np.clip(B4.read(1), p2, p98) - p2)/(p98 - p2)*255, 1)
-        #     dest.write( (np.clip(B3.read(1), p2, p98) - p2)/(p98 - p2)*255, 2)
-        #     dest.write( (np.clip(B2.read(1), p2, p98) - p2)/(p98 - p2)*255, 3)
-
-        # B2.close()
-        # B3.close()
-        # B4.close()
-
-        # remove the intermediate files
-        # for selection in bands:
-        #     os.remove(selection + '.tif')
-        #     os.remove(selection + '.zip')
-
-        profile = {}
-        for layer in self.layers:
-            profile.update(layer.image.profile)
-
-        profile.update({'count': len(self.layers)})
-
-        with rasterio.open("test.tif", 'w', **profile) as dest:
-            for i, layer in enumerate(self.layers):
-                dest.write(layer.image.read(1) , i)
-            
-
-
+        return self.images
 
 
 ee_key_file = "waterbodyweather-key.json"
@@ -208,49 +303,48 @@ credentials = ee.ServiceAccountCredentials(service_account, ee_key_file)
 ee.Initialize(credentials)
 
 # https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2#bands
-# img_collection = ee.ImageCollection("LANDSAT/LC09/C02/T1_L2")
-# "SR_B2"
-
-
 
 from database import engine
 
 water_bodies_table_name = "water_bodies"
 
-water_bodies_df = pd.read_sql(sql=f"SELECT * FROM {water_bodies_table_name} WHERE id = 9725 LIMIT 1;", con=engine.connect())
+water_bodies_df = pd.read_sql(sql=f"""SELECT b.*, g.geometry 
+                              FROM {water_bodies_table_name} b
+                              LEFT JOIN water_body_geometries g
+                              ON b.id = g.id
+                              WHERE b.id = 9725
+                                --order by b.areasqkm asc
+                              LIMIT 1;""", 
+                              con=engine.connect()
+                        )
 
-water_bodies_df = water_bodies_df[["id", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude"]]
+water_bodies_df = water_bodies_df[["id", "areasqkm", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude", "geometry"]]
+
+image_refs: list[GoogleEarthImageReference] = []
 
 for i, row in water_bodies_df.iterrows():
 
-
-    image_asset_list = GoogleEarthImage(
-        start_date=datetime.date.today() - datetime.timedelta(days=80),
-        end_date=datetime.date.today(),
+    image_query = GoogleEarthImageQuery(
+        start_date=datetime.date.today() - datetime.timedelta(days=80), #datetime.date(2023, 1, 1),
+        end_date=datetime.date.today(), #datetime.date(2023, 1, 30), #
         **dict(row.items())
     )
-    from pprint import pprint
 
-    pprint(image_asset_list)
+    images = image_query.get_image_list()
 
-    image_asset_list.get_image_list()
+    for image in images[:1]:
+        image.download_layers()
+        image.combine_image_layers()
+        image.write_file_to_s3()
+        image_refs.append(
+            image.to_image_reference()
+        )
 
-    image_asset_list.download_layers()
+print(image_refs)
 
 
+    # image_asset_list.download_layers()
 
-# image = GoogleEarthImage(id=9725,
-#                  min_latitude=44.9,
-#                  max_latitude=0,
-#                  min_longitude=0,
-#                  max_longitude=0,
-#                  latitude=44.9812577,
-#                  longitude=-93.2716135,
-#                  start_date=datetime.date(2022, 1, 1),
-#                  end_date=datetime.date(2022, 2, 1),
-#                  ee_image=None,
-#                  ee_dataset_name='LANDSAT/LC09/C02/T1_L2')
+    # image_asset_list.combine_image_layers()
 
-# image.get_image_list()
-
-# image.download_layers()
+    # image_asset_list.write_file_to_s3()
