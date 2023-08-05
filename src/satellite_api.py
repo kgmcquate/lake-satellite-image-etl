@@ -10,6 +10,7 @@ import json
 import requests
 import rasterio
 import os
+import cv2
 import numpy as np
 import math
 import shapely
@@ -35,6 +36,7 @@ IMAGE_STORAGE_BUCKET = "public-zone-117819748843-us-east-1"
 IMAGE_STORAGE_PREFIX = "water_body_satellite_images/"
 THUMBNAIL_STORAGE_PREFIX = "water_body_satellite_thumbnails/"
 MAX_IMAGE_SIDE_PIXELS = "2048"
+THUMBNAIL_SCALE_FACTOR = 16
 
 
 
@@ -76,6 +78,8 @@ class GoogleEarthImageReference:
     captured_ts: datetime.datetime
     properties: str
     filename: str
+    thumbnail_filename: str
+    channel_means: list[float]
 
 @dataclass
 class GoogleEarthImage:
@@ -85,10 +89,16 @@ class GoogleEarthImage:
     properties: dict
     ee_image: ee.Image = None
     layers: list[GoogleEarthImageLayer] = None
-    filename: str = None
+    image_filename: str = None
+    thumbnail_filename: str = None
+    clipped_image_filename: str = None
 
     def __post_init__(self):
-        self.filename = f"{self.ee_id}/{self.query.id}_{self.captured_ts.strftime('%Y%M%d%H%m%S')}.tif"
+        filename = f"{self.ee_id}/{self.query.id}_{self.captured_ts.strftime('%Y%M%d%H%m%S')}"
+
+        self.image_filename = f"{filename}.tif"
+        self.thumbnail_filename = f"{filename}_thumbnail.tif"
+        self.clipped_image_filename = f"{filename}_clipped.tif"
 
         self.ee_image = (
             ee.Image(self.ee_id)
@@ -125,7 +135,7 @@ class GoogleEarthImage:
             # There is a separate tif file for each band
             assert len(z.namelist()) == len(self.query.bands)
 
-            print(self.properties)
+            # print(self.properties)
             
             for layer in self.layers:
                 image_filename = f"{self.properties['system:index']}.{layer.band.color_name}.tif"
@@ -168,40 +178,58 @@ class GoogleEarthImage:
         self.tif_memfile = MemoryFile()
 
         with self.tif_memfile.open(**tif_profile) as tif_bytes:
-            for i, layer in enumerate(self.layers):
+
+            self.image_array = np.array([layer.image_array for layer in self.layers])
+            # for i, layer in enumerate(self.layers):
                 # print(layer)
-                tif_bytes.write(layer.image_array , i + 1)
+            tif_bytes.write(self.image_array)
 
             from rasterio.plot import show
             from rasterio.mask import mask
-
             # show(layer.image)
+            print(type(tif_bytes))
             
             img_coords = apply_crs_to_shapely(self.query.boundary, self.layers[0].image.crs.data)
 
-            self.clipped_image_array, out_transform = mask(dataset=tif_bytes, shapes=img_coords, crop=True) #, nodata=-1
+            self.clipped_image_array, out_transform = mask(dataset=tif_bytes, shapes=img_coords, crop=True, nodata=-1)
+
+
+        self.image_channel_means = []
+        for channel in self.clipped_image_array:
+            self.image_channel_means.append(
+                np.mean(channel[channel != -1])
+            )
+
+        # print(self.clipped_image_array)
 
         self.clipped_tif_memfile = MemoryFile()
 
         with self.clipped_tif_memfile.open(**tif_profile) as tif_bytes:
             tif_bytes.write(self.clipped_image_array)
 
-            # show(tif_bytes.read(), adjust=True)
+        # Downsample image for thumbnail
+        self.thumbnail_image_array = self.image_array[:, int(THUMBNAIL_SCALE_FACTOR/2)::THUMBNAIL_SCALE_FACTOR, int(THUMBNAIL_SCALE_FACTOR/2)::THUMBNAIL_SCALE_FACTOR]
 
-    def write_thumbnail_to_s3(self):
+        _, thumbnail_height, thumbnail_width = np.shape(self.thumbnail_image_array)
+        thumbnail_tif_profile = tif_profile.copy()
+        thumbnail_tif_profile['width'] = thumbnail_width
+        thumbnail_tif_profile['height'] = thumbnail_height
+
+        # print(thumbnail_tif_profile)
+
+        self.thumbnail_tif_memfile = MemoryFile()
+        with self.thumbnail_tif_memfile.open(**thumbnail_tif_profile) as tif_bytes:
+            tif_bytes.write(self.thumbnail_image_array)
+
+
+    def write_images_to_s3(self):
         import boto3
 
         s3 = boto3.client('s3')
 
-        s3.put_object(Body=self.tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{THUMBNAIL_STORAGE_PREFIX}{self.filename}')
-
-
-    def write_file_to_s3(self):
-        import boto3
-
-        s3 = boto3.client('s3')
-
-        s3.put_object(Body=self.clipped_tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.filename}')
+        s3.put_object(Body=self.tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.image_filename}')
+        s3.put_object(Body=self.thumbnail_tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.thumbnail_filename}')
+        s3.put_object(Body=self.clipped_tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.clipped_image_filename}')
 
 
     def to_image_reference(self):
@@ -211,7 +239,9 @@ class GoogleEarthImage:
             waterbody_id=self.query.id,
             captured_ts=self.captured_ts,
             properties=json.dumps(self.properties),
-            filename=self.filename
+            filename=self.image_filename,
+            thumbnail_filename=self.thumbnail_filename,
+            channel_means=self.image_channel_means
         )
 
 
@@ -335,16 +365,10 @@ for i, row in water_bodies_df.iterrows():
     for image in images[:1]:
         image.download_layers()
         image.combine_image_layers()
-        image.write_file_to_s3()
+        image.write_images_to_s3()
         image_refs.append(
             image.to_image_reference()
         )
 
 print(image_refs)
 
-
-    # image_asset_list.download_layers()
-
-    # image_asset_list.combine_image_layers()
-
-    # image_asset_list.write_file_to_s3()
