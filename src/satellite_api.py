@@ -3,8 +3,6 @@ from dataclasses import dataclass
 import datetime
 import pandas as pd
 
-
-
 from urllib.parse import urlencode
 import json
 import requests
@@ -18,10 +16,14 @@ import functools
 import io
 from rasterio.io import MemoryFile, DatasetReader
 import geopandas as gpd
+import boto3
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+
+from sqlalchemy.dialects.postgresql import insert
 
 from pprint import pprint
 
-from google.auth.transport.requests import AuthorizedSession
+# from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
 import ee
@@ -32,22 +34,24 @@ from pprint import pprint
 
 from typing import ClassVar, Callable
 
+LOOKBACK_DAYS = 100
 IMAGE_STORAGE_BUCKET = "public-zone-117819748843-us-east-1"
 IMAGE_STORAGE_PREFIX = "water_body_satellite_images/"
 THUMBNAIL_STORAGE_PREFIX = "water_body_satellite_thumbnails/"
 MAX_IMAGE_SIDE_PIXELS = "2048"
 THUMBNAIL_SCALE_FACTOR = 16
-
+IMAGE_NODATA_VALUE = int(0)
 
 
 def apply_crs_to_shapely(shape: shapely.Polygon, crs_data):
     from fiona.crs import from_epsg
+    from rasterio.crs import CRS
     return [
         json.loads(
             gpd.GeoDataFrame(
                 {'geometry': shape}, 
                 index=[0], 
-                crs=from_epsg(4326)
+                crs=CRS.from_epsg(4326)
             )
             .to_crs(crs=crs_data)
             .to_json()
@@ -59,8 +63,8 @@ def apply_crs_to_shapely(shape: shapely.Polygon, crs_data):
 class ImageBand:
     band: str
     color_name: str
-    pixel_value_factor: float
-    pixel_value_offset: float
+    # pixel_value_factor: float
+    # pixel_value_offset: float
     # pixel_value_transform: Callable = lambda x: x  # how to transform pixel values for all bands
 
 @dataclass
@@ -70,6 +74,21 @@ class GoogleEarthImageLayer:
     image_array: np.ndarray = None
     clipped_image: DatasetReader = None
 
+from sqlmodel import SQLModel, Field
+
+class WaterBodySatelliteImage(SQLModel, table=True):    
+    __tablename__ = "waterbody_satellite_images"
+
+    waterbody_id: int = Field(primary_key=True)
+    captured_ts: datetime.datetime = Field(primary_key=True)
+    ee_id: str 
+    satellite_dataset: str
+    properties: str
+    filename: str
+    thumbnail_filename: str
+    red_average: float
+    green_average: float
+    blue_average: float
 
 @dataclass
 class GoogleEarthImageReference:
@@ -97,15 +116,12 @@ class GoogleEarthImage:
         filename = f"{self.ee_id}/{self.query.id}_{self.captured_ts.strftime('%Y%M%d%H%m%S')}"
 
         self.image_filename = f"{filename}.tif"
-        self.thumbnail_filename = f"{filename}_thumbnail.tif"
+        self.thumbnail_filename = f"{filename}_thumbnail.png"
         self.clipped_image_filename = f"{filename}_clipped.tif"
 
         self.ee_image = (
             ee.Image(self.ee_id)
             .select(opt_selectors=[b.band for b in self.query.bands], opt_names=[b.color_name for b in self.query.bands])
-            # Values from https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2
-            # .multiply(0.0000275)
-            # .add(-0.2)
         )
 
         self.layers = [
@@ -115,7 +131,6 @@ class GoogleEarthImage:
 
 
     def download_layers(self):
-
         download_props = {
             # 'scale': meters_per_pixel, # meters per pixel
             'crs': 'EPSG:4326',
@@ -135,10 +150,11 @@ class GoogleEarthImage:
             # There is a separate tif file for each band
             assert len(z.namelist()) == len(self.query.bands)
 
-            # print(self.properties)
-            
             for layer in self.layers:
+                
                 image_filename = f"{self.properties['system:index']}.{layer.band.color_name}.tif"
+                if image_filename not in z.namelist():
+                    image_filename = f"download.{layer.band.color_name}.tif"
                 img_data = z.read(image_filename)
 
                 with MemoryFile() as memfile:
@@ -150,34 +166,31 @@ class GoogleEarthImage:
                     assert len(raw_image_array) == 1
 
                     layer.image_array = raw_image_array[0] #
+
+                    # print(layer.image_array)
+                    # print(np.mean(layer.image_array))
+                    # print(np.max(layer.image_array))
+                    # print(layer.image.profile)
                     # layer.image_array = (raw_image_array[0] * layer.band.pixel_value_factor) + layer.band.pixel_value_offset
-        
-
-        # self.clipped_image_array =     
-        # out_meta=src.meta.copy() # copy the metadata of the source DEM
-
+        print(self.query.id)
         print(self.ee_id)
-        print(self.captured_ts)
 
     def combine_image_layers(self):
 
-        tif_profile = {}
+        self.tif_profile = {}
         for layer in self.layers:
-            tif_profile.update(layer.image.profile)
+            self.tif_profile.update(layer.image.profile)
 
-        # for layer in self.layers:
-        #     print(layer.image_array)
+        self.tif_profile['count'] = len(self.layers)
 
-        tif_profile['count'] = len(self.layers)
-
-        tif_profile['photometric'] = "RGB"
+        self.tif_profile['photometric'] = "RGB"
 
         # The 'tiled' propertty causes issues with the image
-        del tif_profile['tiled']
+        del self.tif_profile['tiled']
 
         self.tif_memfile = MemoryFile()
 
-        with self.tif_memfile.open(**tif_profile) as tif_bytes:
+        with self.tif_memfile.open(**self.tif_profile) as tif_bytes:
 
             self.image_array = np.array([layer.image_array for layer in self.layers])
             # for i, layer in enumerate(self.layers):
@@ -187,61 +200,81 @@ class GoogleEarthImage:
             from rasterio.plot import show
             from rasterio.mask import mask
             # show(layer.image)
-            print(type(tif_bytes))
             
             img_coords = apply_crs_to_shapely(self.query.boundary, self.layers[0].image.crs.data)
 
-            self.clipped_image_array, out_transform = mask(dataset=tif_bytes, shapes=img_coords, crop=True, nodata=-1)
+            self.clipped_image_array, out_transform = mask(dataset=tif_bytes, shapes=img_coords, crop=True, nodata=IMAGE_NODATA_VALUE)
 
+        
 
         self.image_channel_means = []
         for channel in self.clipped_image_array:
             self.image_channel_means.append(
-                np.mean(channel[channel != -1])
+                np.mean(channel[channel != IMAGE_NODATA_VALUE])
             )
 
         # print(self.clipped_image_array)
 
         self.clipped_tif_memfile = MemoryFile()
-
-        with self.clipped_tif_memfile.open(**tif_profile) as tif_bytes:
+        with self.clipped_tif_memfile.open(**self.tif_profile) as tif_bytes:
             tif_bytes.write(self.clipped_image_array)
 
-        # Downsample image for thumbnail
-        self.thumbnail_image_array = self.image_array[:, int(THUMBNAIL_SCALE_FACTOR/2)::THUMBNAIL_SCALE_FACTOR, int(THUMBNAIL_SCALE_FACTOR/2)::THUMBNAIL_SCALE_FACTOR]
 
-        _, thumbnail_height, thumbnail_width = np.shape(self.thumbnail_image_array)
-        thumbnail_tif_profile = tif_profile.copy()
-        thumbnail_tif_profile['width'] = thumbnail_width
-        thumbnail_tif_profile['height'] = thumbnail_height
+    def create_thumbnail_image(self):
+  
+        _, height, width = np.shape(self.image_array)
+        thumbnail_width = int(width / THUMBNAIL_SCALE_FACTOR)
+        thumbnail_height = int(height / THUMBNAIL_SCALE_FACTOR)
 
-        # print(thumbnail_tif_profile)
+        from PIL import Image
 
         self.thumbnail_tif_memfile = MemoryFile()
-        with self.thumbnail_tif_memfile.open(**thumbnail_tif_profile) as tif_bytes:
-            tif_bytes.write(self.thumbnail_image_array)
+        with self.thumbnail_tif_memfile.open(**self.tif_profile) as tif_bytes:
+            tif_bytes.write(self.image_array)
 
+        assert self.image_array.dtype == np.uint8  # Image.fromarray only works with 8 bit colors in RGB mode
+        
+        thumbnail_img = (
+            Image.open(self.thumbnail_tif_memfile, formats=["TIFF"]) # .fromarray(self.image_array) # .transpose((2,1,0)), 'RGB' #
+            # Downsample image for thumbnail
+            .resize((thumbnail_width, thumbnail_height), Image.BICUBIC)
+        )
+
+        self.thumbnail_png_bytes = io.BytesIO()
+
+        # thumbnail_img.save('test.png')
+        thumbnail_img.save(self.thumbnail_png_bytes, format="PNG")
 
     def write_images_to_s3(self):
-        import boto3
+
+        files_to_upload = [
+            {"Body": self.tif_memfile, "Bucket": IMAGE_STORAGE_BUCKET , "Key": f'{IMAGE_STORAGE_PREFIX}{self.image_filename}'},
+            {"Body": self.thumbnail_png_bytes.getvalue(), "Bucket": IMAGE_STORAGE_BUCKET , "Key": f'{IMAGE_STORAGE_PREFIX}{self.thumbnail_filename}'},
+            {"Body": self.clipped_tif_memfile, "Bucket": IMAGE_STORAGE_BUCKET , "Key": f'{IMAGE_STORAGE_PREFIX}{self.clipped_image_filename}'},
+        ]
 
         s3 = boto3.client('s3')
 
-        s3.put_object(Body=self.tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.image_filename}')
-        s3.put_object(Body=self.thumbnail_tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.thumbnail_filename}')
-        s3.put_object(Body=self.clipped_tif_memfile, Bucket=IMAGE_STORAGE_BUCKET , Key=f'{IMAGE_STORAGE_PREFIX}{self.clipped_image_filename}')
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(s3.put_object, **file_to_upload) for file_to_upload in files_to_upload]
+        
+        for future in futures:
+            future.result()
 
 
     def to_image_reference(self):
         """This will be stored in the DB"""
-        return GoogleEarthImageReference(
-            ee_id=self.ee_id,
+        return WaterBodySatelliteImage(
             waterbody_id=self.query.id,
             captured_ts=self.captured_ts,
+            satellite_dataset=self.query.ee_dataset_name,
+            ee_id=self.ee_id,
             properties=json.dumps(self.properties),
             filename=self.image_filename,
             thumbnail_filename=self.thumbnail_filename,
-            channel_means=self.image_channel_means
+            red_average=self.image_channel_means[0],
+            green_average=self.image_channel_means[1],
+            blue_average=self.image_channel_means[2]
         )
 
 
@@ -258,14 +291,10 @@ class GoogleEarthImageQuery:
     start_date: datetime.date
     end_date: datetime.date
     geometry: list[list[list[float]]]
-
-    ee_dataset_name: str = "LANDSAT/LC09/C02/T1_L2"
-
-    bands: tuple[ImageBand] = (
-        ImageBand('SR_B4', 'red', 0.0000275, -0.2), 
-        ImageBand('SR_B3', 'green', 0.0000275, -0.2), 
-        ImageBand('SR_B2', 'blue', 0.0000275, -0.2),
-    )
+    exclude_ee_ids: list[str]
+    ee_dataset_name: str
+    bands: tuple[ImageBand]
+    ee_filter: ee.Filter = None
 
     images: tuple[GoogleEarthImage] = None
 
@@ -274,6 +303,9 @@ class GoogleEarthImageQuery:
     def __post_init__(self):
         self.latitude = float(self.latitude)
         self.longitude = float(self.longitude)
+
+        if self.exclude_ee_ids is None:
+            self.exclude_ee_ids = []
 
         # remove z element
         for polygon in self.geometry:
@@ -304,22 +336,26 @@ class GoogleEarthImageQuery:
             # .addBands(ee.Image.pixelLonLat())
         )
 
+        if self.ee_filter:
+            img_collection = img_collection.filter(self.ee_filter)
+
         if img_collection.getInfo() is None:
             raise Exception(f"No images found for {self}")
 
-        self.images = []
+        self.images: list[GoogleEarthImage] = []
         for img in img_collection.getInfo()['features']:
- 
-            capture_ts_unix = int(int(img['properties']['system:time_start']) / 1000)
+            # Exclude ee ids that already have been downloaded
+            if img['id'] not in self.exclude_ee_ids:
+                capture_ts_unix = int(int(img['properties']['system:time_start']) / 1000)
 
-            self.images.append(
-                GoogleEarthImage(
-                    query=self,
-                    ee_id=img['id'],
-                    captured_ts=datetime.datetime.fromtimestamp(capture_ts_unix),
-                    properties=img['properties']
+                self.images.append(
+                    GoogleEarthImage(
+                        query=self,
+                        ee_id=img['id'],
+                        captured_ts=datetime.datetime.fromtimestamp(capture_ts_unix),
+                        properties=img['properties']
+                    )
                 )
-            )
 
         return self.images
 
@@ -338,37 +374,86 @@ from database import engine
 
 water_bodies_table_name = "water_bodies"
 
-water_bodies_df = pd.read_sql(sql=f"""SELECT b.*, g.geometry 
+water_bodies_df = pd.read_sql(sql=f"""
+                              WITH already_downloaded_images AS (
+                                SELECT waterbody_id, ARRAY_AGG(ee_id) as exclude_ee_ids
+                                FROM waterbody_satellite_images
+                                --WHERE time filter
+                                GROUP BY waterbody_id
+                              )
+                              
+                              SELECT b.*, g.geometry, d.exclude_ee_ids
                               FROM {water_bodies_table_name} b
                               LEFT JOIN water_body_geometries g
                               ON b.id = g.id
-                              WHERE b.id = 9725
-                                --order by b.areasqkm asc
-                              LIMIT 1;""", 
+                              LEFT JOIN already_downloaded_images d
+                              ON b.id = d.waterbody_id
+                              --WHERE b.id = 9725
+                              WHERE b.areasqkm < 900
+                              order by b.areasqkm desc
+                              LIMIT 1000;""", 
                               con=engine.connect()
                         )
 
-water_bodies_df = water_bodies_df[["id", "areasqkm", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude", "geometry"]]
+water_bodies_df = water_bodies_df[["id", "areasqkm", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude", "geometry", "exclude_ee_ids"]]
 
-image_refs: list[GoogleEarthImageReference] = []
 
-for i, row in water_bodies_df.iterrows():
+satellite_dataset_configs = [
+    # {
+    #     "ee_dataset_name": "LANDSAT/LC09/C02/T1_L2",
+    #     "bands": (
+    #         ImageBand('SR_B4', 'red', 0.0000275, -0.2), 
+    #         ImageBand('SR_B3', 'green', 0.0000275, -0.2), 
+    #         ImageBand('SR_B2', 'blue', 0.0000275, -0.2),
+    #     )
+    # },
+    {
+        "ee_dataset_name": "COPERNICUS/S2_SR_HARMONIZED",
+        "ee_filter": ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20),
+        "bands": (
+            ImageBand('TCI_R', 'red'), 
+            ImageBand('TCI_G', 'green'), 
+            ImageBand('TCI_B', 'blue'),
+        )
+    }
+]
 
-    image_query = GoogleEarthImageQuery(
-        start_date=datetime.date.today() - datetime.timedelta(days=80), #datetime.date(2023, 1, 1),
-        end_date=datetime.date.today(), #datetime.date(2023, 1, 30), #
-        **dict(row.items())
-    )
 
-    images = image_query.get_image_list()
 
-    for image in images[:1]:
-        image.download_layers()
-        image.combine_image_layers()
-        image.write_images_to_s3()
-        image_refs.append(
-            image.to_image_reference()
+def run_image_query(row):
+    for dataset_config in satellite_dataset_configs:
+
+        image_query = GoogleEarthImageQuery(
+            start_date=datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS), #datetime.date(2023, 1, 1),
+            end_date=datetime.date.today(), #datetime.date(2023, 1, 30), #
+            **dataset_config,
+            **dict(row.items())
         )
 
-print(image_refs)
+        images = image_query.get_image_list()
 
+        for image in images:
+            image.download_layers()
+            image.combine_image_layers()
+            image.create_thumbnail_image()
+            image.write_images_to_s3()
+
+            table_record = image.to_image_reference()
+
+            with engine.connect() as conn:
+                stmt = insert(WaterBodySatelliteImage).values(table_record.dict())
+                stmt = stmt.on_conflict_do_nothing()
+                result = conn.execute(stmt)
+
+futures = []
+with ThreadPoolExecutor(max_workers=5) as executor:
+    for i, row in water_bodies_df.iterrows():
+        futures.append(
+            executor.submit(run_image_query, row)
+        )
+        # run_image_query(row)
+
+for future in futures:
+    future.result()
+
+    
