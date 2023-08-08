@@ -112,10 +112,15 @@ weather_df
 
 # Remove the columns with high corre
 import numpy as np
+
+from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
+scaled_weather = StandardScaler().fit_transform(weather_df.to_numpy())
+
 pca = PCA(n_components=5)
-pca.fit(weather_df.to_numpy())
+pca.fit(scaled_weather)
 
 print(pca.explained_variance_ratio_)
-print(pca.singular_values_)
+
+print(pca.components_)
