@@ -88,6 +88,7 @@ class WaterBodySatelliteImage(SQLModel, table=True):
     red_average: float
     green_average: float
     blue_average: float
+    white_fraction: float
 
 @dataclass
 class GoogleEarthImageReference:
@@ -218,6 +219,36 @@ class GoogleEarthImage:
         with self.clipped_tif_memfile.open(**self.tif_profile) as tif_bytes:
             tif_bytes.write(self.clipped_image_array)
 
+    def run_image_calculations(self):
+
+        self.image_channel_means = []
+        for channel in self.clipped_image_array:
+            self.image_channel_means.append(
+                np.mean(channel[channel != IMAGE_NODATA_VALUE])
+            )
+
+        # Definition of white is rgb channels are all above 128 (out of 255) 
+        # and all colors are within 15% of each other
+        # for 8 bit color/sRGB
+        assert self.clipped_image_array.dtype == np.uint8
+
+        img = self.clipped_image_array.transpose((2, 1, 0))
+        
+        channel_max = 255 # for unint8
+
+        is_out_of_bounds = img.max(2) == IMAGE_NODATA_VALUE
+        is_white = (img.min(2) >= int(0.6 * channel_max)) & ((img.max(2) - img.min(2)) <= int(0.1 * channel_max))
+
+        num_in_bounds_pixels = is_out_of_bounds.size - is_out_of_bounds.sum()
+
+        print(num_in_bounds_pixels)
+
+        self.white_fraction = is_white.sum() / num_in_bounds_pixels
+
+        print("white:")
+        print(
+            self.white_fraction
+        )
 
     def create_thumbnail_image(self):
   
@@ -273,7 +304,8 @@ class GoogleEarthImage:
             thumbnail_filename=self.thumbnail_filename,
             red_average=self.image_channel_means[0],
             green_average=self.image_channel_means[1],
-            blue_average=self.image_channel_means[2]
+            blue_average=self.image_channel_means[2],
+            white_fraction=self.white_fraction
         )
 
 
@@ -390,7 +422,7 @@ water_bodies_df = pd.read_sql(sql=f"""
                               --WHERE b.id = 9725
                               WHERE b.areasqkm < 900
                               order by b.areasqkm desc
-                              LIMIT 1000;""", 
+                              LIMIT 2000;""", 
                               con=engine.connect()
                         )
 
@@ -417,23 +449,25 @@ satellite_dataset_configs = [
     }
 ]
 
-
+end_date = datetime.date.today()
+start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
 
 def run_image_query(row):
     for dataset_config in satellite_dataset_configs:
 
         image_query = GoogleEarthImageQuery(
-            start_date=datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS), #datetime.date(2023, 1, 1),
-            end_date=datetime.date.today(), #datetime.date(2023, 1, 30), #
+            start_date=start_date, #datetime.date(2023, 1, 1),
+            end_date=end_date, #datetime.date(2023, 1, 30), #
             **dataset_config,
             **dict(row.items())
         )
 
         images = image_query.get_image_list()
 
-        for image in images:
+        for image in images[:1]:
             image.download_layers()
             image.combine_image_layers()
+            image.run_image_calculations()
             image.create_thumbnail_image()
             image.write_images_to_s3()
 
@@ -453,6 +487,8 @@ with ThreadPoolExecutor(max_workers=5) as executor:
         # run_image_query(row)
 
 for future in futures:
-    future.result()
+    print(
+        future.result()
+    )
 
     

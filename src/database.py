@@ -26,7 +26,7 @@ connectorx_url = f"postgresql://{db_username}:{db_password}@{db_endpoint}:5432/p
 
 
 # print("creating engine")
-# engine = sqlalchemy.create_engine() #/lake_freeze
+engine = sqlalchemy.create_engine(jdbc_url) #/lake_freeze
 
 
 

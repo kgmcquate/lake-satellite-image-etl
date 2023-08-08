@@ -68,7 +68,7 @@ weather_df = pl.read_database(f"""
                     INNER JOIN training_waterbody_ids ids
                     ON w.latitude = ids.latitude AND w.longitude = ids.longitude
                     WHERE "date" BETWEEN '{start_date.strftime('%Y-%m-%d')}'::date AND '{end_date.strftime('%Y-%m-%d')}'::date
-                    LIMIT 10
+                    --LIMIT 10
                 """, 
                 connectorx_url
             )
@@ -92,35 +92,44 @@ pl.Config.set_tbl_rows(100)
 pl.Config.set_tbl_cols(30)
 
 print(
-weather_df
+    weather_df.select(pl.count())
 )
 
 
 # Dimensionality reduction on weather data
-# correlation_matrix = weather_df.corr()
-# print(correlation_matrix)
+correlation_matrix = weather_df.corr()
+print(correlation_matrix)
 
 
-# stacked_corr = (
-#     correlation_matrix
-#     .with_columns(index = pl.lit(correlation_matrix.columns))
-#     .melt(id_vars = "index")
-#     .filter(pl.col('index') != pl.col('variable'))
-# )
+stacked_corr = (
+    correlation_matrix
+    .with_columns(index = pl.lit(correlation_matrix.columns))
+    .melt(id_vars = "index")
+    .filter(pl.col('index') != pl.col('variable'))
+    .with_columns(
+        pl.when(pl.col('index') > pl.col('variable'))
+        .then(pl.col('index') + pl.lit(' ') + pl.col('variable'))
+        .otherwise(pl.col('variable') + pl.lit(' ') + pl.col('index'))
+        .alias("feature_pair")
+    )
+    .filter(pl.col( "value").is_not_nan())
+    .select("feature_pair", pl.col("value").abs().alias("abs_corr"))
+    # .drop_nulls("value")
+    .unique("feature_pair")
+    .filter(pl.col("abs_corr") > 0.8)
+    .sort(pl.col("abs_corr"), descending=True)
+)
 
-# print(stacked_corr)
+print(stacked_corr)
 
-# Remove the columns with high corre
-import numpy as np
+# Only 1 feature from feature pairs with high correlation should be used
+features_to_drop = [
+    "sunrise", "sunset", "windgusts_10m_max", "winddirection_10m_dominant", "et0_fao_evapotranspiration"
+]
 
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+print(
+    set(weather_df.columns) - set(features_to_drop)
+)
 
-scaled_weather = StandardScaler().fit_transform(weather_df.to_numpy())
+selected_features = {'snowfall_sum', 'windspeed_10m_max', 'precipitation_hours', 'showers_sum', 'shortwave_radiation_sum', 'year', 'latitude', 'precipitation_sum', 'month', 'day', 'day_of_year', 'temperature_2m_max', 'temperature_2m_min', 'rain_sum', 'longitude'}
 
-pca = PCA(n_components=5)
-pca.fit(scaled_weather)
-
-print(pca.explained_variance_ratio_)
-
-print(pca.components_)
