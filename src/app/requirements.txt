@@ -1,11 +1,8 @@
 boto3
 numpy
 pandas
-geopandas
 earthengine-api
 shapely
 requests
 google-auth
 pyarrow
-connectorx==0.3.2a7
-scikit-learn
