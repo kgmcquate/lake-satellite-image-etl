@@ -13,7 +13,8 @@ COPY ./dist/* ./dist/
 #     ./configure --enable-optimizations && \
 #     make altinstall
 
-RUN pip3 install -r src/app/requirements.txt && pip3 install ./dist/*
+RUN pip3 install -r ./requirements.txt 
+RUN pip3 install ./dist/*
 
 # EMRS will run the image as hadoop
 USER hadoop:hadoop

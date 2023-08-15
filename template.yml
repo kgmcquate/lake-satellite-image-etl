@@ -68,50 +68,50 @@ Resources:
         SubnetIds: !Ref SubnetIds
 
   
-  # StepFunctionStateMachine:
-  #   Type: AWS::StepFunctions::StateMachine
-  #   Properties:
-  #     StateMachineName: EMRSatelliteImageETLJobStateMachine
-  #     RoleArn: !Ref ExecutionRoleArn
-  #     Definition: {
-  #           "Comment": "Runs EMR Serverless job for Satellite Image ETL",
-  #           "StartAt": "StartJobRun",
-  #           "States": {
-  #               "StartJobRun": {
-  #                 "Type": "Task",
-  #                 "End": true,
-  #                 "Parameters": {
-  #                     "Name": "Satellite Image ETL",
-  #                     "ClientToken.$": "States.UUID()",
-  #                     "ApplicationId": !Ref EMRServerlessApplication,
-  #                     "ExecutionRoleArn": !Ref ExecutionRoleArn,
-  #                     "JobDriver": {
-  #                       "SparkSubmit": {
-  #                           "EntryPoint": !Sub "s3://${DeploymentZone}/satellite_image_etl/spark_entrypoint.py",
-  #                           "SparkSubmitParameters": !Sub "
-  #                               --driver-memory 2G 
-  #                               --driver-cores 2 
-  #                               --num-executors 1 
-  #                               --executor-memory 2G
-  #                               --executor-cores 2
-  #                               --conf spark.dynamicAllocation.enabled=false
-  #                               --jars https://repo1.maven.org/maven2/org/postgresql/postgresql/42.6.0/postgresql-42.6.0.jar
-  #                             "
-  #                       }
-  #                     },
-  #                     "ConfigurationOverrides": {
-  #                       "MonitoringConfiguration": {
-  #                         "S3MonitoringConfiguration": {
-  #                           "LogUri": !Sub "s3://${EmrZone}/logging/"
-  #                         }
-  #                       }
-  #                     },
-  #                     "ExecutionTimeoutMinutes": 600
-  #                 },
-  #                 "Resource": "arn:aws:states:::aws-sdk:emrserverless:startJobRun"
-  #               }
-  #           }
-  #       }
+  StepFunctionStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: EMRSatelliteImageETLJobStateMachine
+      RoleArn: !Ref ExecutionRoleArn
+      Definition: {
+            "Comment": "Runs EMR Serverless job for Satellite Image ETL",
+            "StartAt": "StartJobRun",
+            "States": {
+                "StartJobRun": {
+                  "Type": "Task",
+                  "End": true,
+                  "Parameters": {
+                      "Name": "Satellite Image ETL",
+                      "ClientToken.$": "States.UUID()",
+                      "ApplicationId": !Ref EMRServerlessApplication,
+                      "ExecutionRoleArn": !Ref ExecutionRoleArn,
+                      "JobDriver": {
+                        "SparkSubmit": {
+                            "EntryPoint": !Sub "s3://${DeploymentZone}/satellite_image_etl/spark_entrypoint.py",
+                            "SparkSubmitParameters": !Sub "
+                                --driver-memory 2G 
+                                --driver-cores 2 
+                                --num-executors 1 
+                                --executor-memory 2G
+                                --executor-cores 2
+                                --conf spark.dynamicAllocation.enabled=false
+                                --jars https://repo1.maven.org/maven2/org/postgresql/postgresql/42.6.0/postgresql-42.6.0.jar
+                              "
+                        }
+                      },
+                      "ConfigurationOverrides": {
+                        "MonitoringConfiguration": {
+                          "S3MonitoringConfiguration": {
+                            "LogUri": !Sub "s3://${EmrZone}/logging/"
+                          }
+                        }
+                      },
+                      "ExecutionTimeoutMinutes": 600
+                  },
+                  "Resource": "arn:aws:states:::aws-sdk:emrserverless:startJobRun"
+                }
+            }
+        }
 
 
   ECRRepository:

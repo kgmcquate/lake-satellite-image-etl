@@ -6,8 +6,6 @@ earthengine-api
 shapely
 requests
 google-auth
-
-#for ml script
 pyarrow
 connectorx==0.3.2a7
 scikit-learn
