@@ -128,7 +128,7 @@ class GoogleEarthImageReference:
     properties: str
     filename: str
     thumbnail_filename: str
-    channel_means: list[float]
+    channel_means: "list[float]"
 
 @dataclass
 class GoogleEarthImage:
@@ -137,7 +137,7 @@ class GoogleEarthImage:
     captured_ts: datetime.datetime
     properties: dict
     ee_image: ee.Image = None
-    layers: list[GoogleEarthImageLayer] = None
+    layers: "list[GoogleEarthImageLayer]" = None
     image_filename: str = None
     thumbnail_filename: str = None
     clipped_image_filename: str = None
@@ -358,10 +358,10 @@ class GoogleEarthImageQuery:
     longitude: float
     start_date: datetime.date
     end_date: datetime.date
-    geometry: list[list[list[float]]]
-    exclude_ee_ids: list[str]
+    geometry: "list[list[list[float]]]"
+    exclude_ee_ids: "list[str]"
     ee_dataset_name: str
-    bands: tuple[ImageBand]
+    bands: "tuple[ImageBand]"
     ee_filter: ee.Filter = None
 
     images: tuple[GoogleEarthImage] = None
@@ -482,9 +482,6 @@ def main():
                             )
 
     water_bodies_df = water_bodies_df[["id", "areasqkm", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude", "geometry", "exclude_ee_ids"]]
-
-
-
 
 
     futures = []

@@ -27,91 +27,91 @@ Parameters:
     Default: subnet-0cdc957115446f72d
 
 Resources:
-  ETLJobTrigger:
-    Type: AWS::Events::Rule
-    Properties: 
-      # Description: String
-      Name: SatelliteImageETLJobTrigger
-      RoleArn: !Ref ExecutionRoleArn
-      ScheduleExpression: "cron(0 6 * * ? *)"
-      State: ENABLED
-      Targets:
-        - Id: ETLStepFunction
-          Arn: !GetAtt StepFunctionStateMachine.Arn
-          Input: "{\n  \"input\": \"{}\"\n}"
-          RetryPolicy:
-            MaximumEventAgeInSeconds: 300
-            MaximumRetryAttempts: 3
-          RoleArn: !Ref ExecutionRoleArn
+  # ETLJobTrigger:
+  #   Type: AWS::Events::Rule
+  #   Properties: 
+  #     # Description: String
+  #     Name: SatelliteImageETLJobTrigger
+  #     RoleArn: !Ref ExecutionRoleArn
+  #     ScheduleExpression: "cron(0 6 * * ? *)"
+  #     State: ENABLED
+  #     Targets:
+  #       - Id: ETLStepFunction
+  #         Arn: !GetAtt StepFunctionStateMachine.Arn
+  #         Input: "{\n  \"input\": \"{}\"\n}"
+  #         RetryPolicy:
+  #           MaximumEventAgeInSeconds: 300
+  #           MaximumRetryAttempts: 3
+  #         RoleArn: !Ref ExecutionRoleArn
 
-  EMRServerlessApplication:
-    Type: AWS::EMRServerless::Application
-    DependsOn: ECRRepository
-    Properties: 
-      Name: SatelliteImageETLApplication
-      Architecture: X86_64
-      AutoStartConfiguration: 
-        Enabled: true
-      AutoStopConfiguration: 
-        Enabled: true
-        IdleTimeoutMinutes: 1
-      MaximumCapacity: 
-        Cpu: 4vCPU
-        Disk: 100GB
-        Memory: 16GB
-      ReleaseLabel: "emr-6.10.0"
-      Type: Spark
-      ImageConfiguration:
-        ImageUri: !Ref DockerImageUri
-      NetworkConfiguration:
-        SecurityGroupIds: !Ref SecurityGroupIds
-        SubnetIds: !Ref SubnetIds
+  # EMRServerlessApplication:
+  #   Type: AWS::EMRServerless::Application
+  #   DependsOn: ECRRepository
+  #   Properties: 
+  #     Name: SatelliteImageETLApplication
+  #     Architecture: X86_64
+  #     AutoStartConfiguration: 
+  #       Enabled: true
+  #     AutoStopConfiguration: 
+  #       Enabled: true
+  #       IdleTimeoutMinutes: 1
+  #     MaximumCapacity: 
+  #       Cpu: 4vCPU
+  #       Disk: 100GB
+  #       Memory: 16GB
+  #     ReleaseLabel: "emr-6.10.0"
+  #     Type: Spark
+  #     ImageConfiguration:
+  #       ImageUri: !Ref DockerImageUri
+  #     NetworkConfiguration:
+  #       SecurityGroupIds: !Ref SecurityGroupIds
+  #       SubnetIds: !Ref SubnetIds
 
   
-  StepFunctionStateMachine:
-    Type: AWS::StepFunctions::StateMachine
-    Properties:
-      StateMachineName: EMRSatelliteImageETLJobStateMachine
-      RoleArn: !Ref ExecutionRoleArn
-      Definition: {
-            "Comment": "Runs EMR Serverless job for Satellite Image ETL",
-            "StartAt": "StartJobRun",
-            "States": {
-                "StartJobRun": {
-                  "Type": "Task",
-                  "End": true,
-                  "Parameters": {
-                      "Name": "Satellite Image ETL",
-                      "ClientToken.$": "States.UUID()",
-                      "ApplicationId": !Ref EMRServerlessApplication,
-                      "ExecutionRoleArn": !Ref ExecutionRoleArn,
-                      "JobDriver": {
-                        "SparkSubmit": {
-                            "EntryPoint": !Sub "s3://${DeploymentZone}/satellite_image_etl/spark_entrypoint.py",
-                            "SparkSubmitParameters": !Sub "
-                                --driver-memory 2G 
-                                --driver-cores 2 
-                                --num-executors 1 
-                                --executor-memory 2G
-                                --executor-cores 2
-                                --conf spark.dynamicAllocation.enabled=false
-                                --jars https://repo1.maven.org/maven2/org/postgresql/postgresql/42.6.0/postgresql-42.6.0.jar
-                              "
-                        }
-                      },
-                      "ConfigurationOverrides": {
-                        "MonitoringConfiguration": {
-                          "S3MonitoringConfiguration": {
-                            "LogUri": !Sub "s3://${EmrZone}/logging/"
-                          }
-                        }
-                      },
-                      "ExecutionTimeoutMinutes": 600
-                  },
-                  "Resource": "arn:aws:states:::aws-sdk:emrserverless:startJobRun"
-                }
-            }
-        }
+  # StepFunctionStateMachine:
+  #   Type: AWS::StepFunctions::StateMachine
+  #   Properties:
+  #     StateMachineName: EMRSatelliteImageETLJobStateMachine
+  #     RoleArn: !Ref ExecutionRoleArn
+  #     Definition: {
+  #           "Comment": "Runs EMR Serverless job for Satellite Image ETL",
+  #           "StartAt": "StartJobRun",
+  #           "States": {
+  #               "StartJobRun": {
+  #                 "Type": "Task",
+  #                 "End": true,
+  #                 "Parameters": {
+  #                     "Name": "Satellite Image ETL",
+  #                     "ClientToken.$": "States.UUID()",
+  #                     "ApplicationId": !Ref EMRServerlessApplication,
+  #                     "ExecutionRoleArn": !Ref ExecutionRoleArn,
+  #                     "JobDriver": {
+  #                       "SparkSubmit": {
+  #                           "EntryPoint": !Sub "s3://${DeploymentZone}/satellite_image_etl/spark_entrypoint.py",
+  #                           "SparkSubmitParameters": !Sub "
+  #                               --driver-memory 2G 
+  #                               --driver-cores 2 
+  #                               --num-executors 1 
+  #                               --executor-memory 2G
+  #                               --executor-cores 2
+  #                               --conf spark.dynamicAllocation.enabled=false
+  #                               --jars https://repo1.maven.org/maven2/org/postgresql/postgresql/42.6.0/postgresql-42.6.0.jar
+  #                             "
+  #                       }
+  #                     },
+  #                     "ConfigurationOverrides": {
+  #                       "MonitoringConfiguration": {
+  #                         "S3MonitoringConfiguration": {
+  #                           "LogUri": !Sub "s3://${EmrZone}/logging/"
+  #                         }
+  #                       }
+  #                     },
+  #                     "ExecutionTimeoutMinutes": 600
+  #                 },
+  #                 "Resource": "arn:aws:states:::aws-sdk:emrserverless:startJobRun"
+  #               }
+  #           }
+  #       }
 
 
   ECRRepository:
