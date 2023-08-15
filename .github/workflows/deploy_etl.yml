@@ -1,0 +1,79 @@
+name: Deploy SAM
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: "us-east-1"
+  AWS_ACCOUNT_ID: "117819748843"
+
+permissions:
+  contents: read
+
+jobs:
+  # deploy_docker_image:
+  #   name: Deploy Docker Image
+  #   runs-on: ubuntu-latest
+  #   environment: production
+  #   container:
+  #     image: public.ecr.aws/sam/build-python3.7:latest #continuumio/miniconda3 #public.ecr.aws/sam/build-python3.9:latest #continuumio/miniconda3 #public.ecr.aws/sam/build-python3.7:latest #public.ecr.aws/sam/build-python3.9:latest #amazonlinux:2 #
+
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v3
+
+  #     - name: Configure AWS credentials
+  #       uses: aws-actions/configure-aws-credentials@v1
+  #       with:
+  #         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         aws-region: ${{ env.AWS_REGION }}
+
+  #     - name: Build python package
+  #       run: |
+  #         pip install venv-pack awscli build
+  #         python -m build --sdist ./
+
+
+  #     - name: build and push
+  #       uses: vitr/actions-build-and-upload-to-ecs@master
+  #       with:
+  #         access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         account_id: ${{ env.AWS_ACCOUNT_ID }}
+  #         repo: satellite-image-etl/pyspark-env
+  #         region: ${{ env.AWS_REGION }}
+  #         tags: latest
+  #         create_repo: false
+         
+
+  #     - name: Copy Python files to S3 deployment zone
+  #       run: |
+  #         aws s3 cp spark_entrypoint.py s3://deployment-zone-${AWS_ACCOUNT_ID}/satellite_image_etl/
+
+  deploy_sam:
+    name: Deploy SAM template
+    runs-on: ubuntu-latest
+    environment: production
+    container:
+      image: public.ecr.aws/sam/build-python3.9:latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+
+    - name: SAM build
+      run: sam build
+      
+    - name: SAM deploy
+      run: sam deploy --no-fail-on-empty-changeset
+

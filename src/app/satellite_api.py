@@ -2,19 +2,15 @@
 from dataclasses import dataclass
 import datetime
 import pandas as pd
-
+import os
 from urllib.parse import urlencode
 import json
 import requests
-import rasterio
-import os
 import numpy as np
-import math
 import shapely
 import functools
 import io
 from rasterio.io import MemoryFile, DatasetReader
-import geopandas as gpd
 import boto3
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
@@ -33,30 +29,42 @@ from pprint import pprint
 
 from typing import ClassVar, Callable
 
-LOOKBACK_DAYS = 100
+LOOKBACK_DAYS = 800
 IMAGE_STORAGE_BUCKET = "public-zone-117819748843-us-east-1"
 IMAGE_STORAGE_PREFIX = "water_body_satellite_images/"
 THUMBNAIL_STORAGE_PREFIX = "water_body_satellite_thumbnails/"
-MAX_IMAGE_SIDE_PIXELS = "2048"
-THUMBNAIL_SCALE_FACTOR = 16
+MAX_IMAGE_SIDE_PIXELS = "2100"
+THUMBNAIL_SCALE_FACTOR = 7
 IMAGE_NODATA_VALUE = int(0)
+PARALLELISM = 10
+check_existing_images = True
+
+end_date = datetime.date.today()
+start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
+waterbody_limit = 1000
+area_limit = 900
+
+from database import engine
+
+# ee_key_file = "waterbodyweather-key.json"
+
+# with open(ee_key_file, "r") as f:
+#     key_data = f.read()
+
+# ""
+
+secret_arn = os.environ.get("DB_CREDS_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:117819748843:secret:google-earth-engine-api-key")
 
 
-def apply_crs_to_shapely(shape: shapely.Polygon, crs_data):
-    from fiona.crs import from_epsg
-    from rasterio.crs import CRS
-    return [
-        json.loads(
-            gpd.GeoDataFrame(
-                {'geometry': shape}, 
-                index=[0], 
-                crs=CRS.from_epsg(4326)
-            )
-            .to_crs(crs=crs_data)
-            .to_json()
-        )
-        ['features'][0]['geometry']
-    ]
+key_data = boto3.client("secretsmanager", 'us-east-1').get_secret_value(SecretId=secret_arn)["SecretString"]
+
+
+import ee
+service_account = 'service-google-earth-api@waterbodyweather.iam.gserviceaccount.com'
+credentials = ee.ServiceAccountCredentials(service_account, key_data=key_data)
+
+ee.Initialize(credentials)
+
 
 @dataclass
 class ImageBand:
@@ -65,6 +73,28 @@ class ImageBand:
     # pixel_value_factor: float
     # pixel_value_offset: float
     # pixel_value_transform: Callable = lambda x: x  # how to transform pixel values for all bands
+
+
+satellite_dataset_configs = [
+        # {
+        #     "ee_dataset_name": "LANDSAT/LC09/C02/T1_L2",
+        #     "bands": (
+        #         ImageBand('SR_B4', 'red', 0.0000275, -0.2), 
+        #         ImageBand('SR_B3', 'green', 0.0000275, -0.2), 
+        #         ImageBand('SR_B2', 'blue', 0.0000275, -0.2),
+        #     )
+        # },
+        {
+            "ee_dataset_name": "COPERNICUS/S2_SR_HARMONIZED",
+            "ee_filter": ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20),
+            "bands": (
+                ImageBand('TCI_R', 'red'), 
+                ImageBand('TCI_G', 'green'), 
+                ImageBand('TCI_B', 'blue'),
+            )
+        }
+    ]
+
 
 @dataclass
 class GoogleEarthImageLayer:
@@ -172,7 +202,7 @@ class GoogleEarthImage:
                     # print(np.max(layer.image_array))
                     # print(layer.image.profile)
                     # layer.image_array = (raw_image_array[0] * layer.band.pixel_value_factor) + layer.band.pixel_value_offset
-        print(self.query.id)
+        print(f"waterbody id: {self.query.id}")
         print(self.ee_id)
 
     def combine_image_layers(self):
@@ -193,6 +223,12 @@ class GoogleEarthImage:
         with self.tif_memfile.open(**self.tif_profile) as tif_bytes:
 
             self.image_array = np.array([layer.image_array for layer in self.layers])
+
+            for layer in self.layers:
+                assert layer.image.crs.data["init"] == 'epsg:4326'
+
+            self.layers = None # Attempt at reducing memory usage
+
             # for i, layer in enumerate(self.layers):
                 # print(layer)
             tif_bytes.write(self.image_array)
@@ -200,10 +236,13 @@ class GoogleEarthImage:
             from rasterio.plot import show
             from rasterio.mask import mask
             # show(layer.image)
-            
-            img_coords = apply_crs_to_shapely(self.query.boundary, self.layers[0].image.crs.data)
 
-            self.clipped_image_array, out_transform = mask(dataset=tif_bytes, shapes=img_coords, crop=True, nodata=IMAGE_NODATA_VALUE)
+            
+            
+            # boundary_img_coords = [json.loads(shapely.to_geojson(self.query.boundary))]
+            boundary_img_coords = [shapely.geometry.mapping(self.query.boundary)]
+
+            self.clipped_image_array, out_transform = mask(dataset=tif_bytes, shapes=boundary_img_coords, crop=True, nodata=IMAGE_NODATA_VALUE)
 
         
 
@@ -241,8 +280,6 @@ class GoogleEarthImage:
 
         num_in_bounds_pixels = is_out_of_bounds.size - is_out_of_bounds.sum()
 
-        print(num_in_bounds_pixels)
-
         self.white_fraction = is_white.sum() / num_in_bounds_pixels
 
         print("white:")
@@ -271,9 +308,9 @@ class GoogleEarthImage:
         )
 
         self.thumbnail_png_bytes = io.BytesIO()
-
         # thumbnail_img.save('test.png')
         thumbnail_img.save(self.thumbnail_png_bytes, format="PNG")
+
 
     def write_images_to_s3(self):
 
@@ -376,7 +413,7 @@ class GoogleEarthImageQuery:
         self.images: list[GoogleEarthImage] = []
         for img in img_collection.getInfo()['features']:
             # Exclude ee ids that already have been downloaded
-            if img['id'] not in self.exclude_ee_ids:
+            if not check_existing_images or img['id'] not in self.exclude_ee_ids:
                 capture_ts_unix = int(int(img['properties']['system:time_start']) / 1000)
 
                 self.images.append(
@@ -391,67 +428,6 @@ class GoogleEarthImageQuery:
         return self.images
 
 
-ee_key_file = "waterbodyweather-key.json"
-
-import ee
-service_account = 'service-google-earth-api@waterbodyweather.iam.gserviceaccount.com'
-credentials = ee.ServiceAccountCredentials(service_account, ee_key_file)
-
-ee.Initialize(credentials)
-
-# https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2#bands
-
-from database import engine
-
-water_bodies_table_name = "water_bodies"
-
-water_bodies_df = pd.read_sql(sql=f"""
-                              WITH already_downloaded_images AS (
-                                SELECT waterbody_id, ARRAY_AGG(ee_id) as exclude_ee_ids
-                                FROM waterbody_satellite_images
-                                --WHERE time filter
-                                GROUP BY waterbody_id
-                              )
-                              
-                              SELECT b.*, g.geometry, d.exclude_ee_ids
-                              FROM {water_bodies_table_name} b
-                              LEFT JOIN water_body_geometries g
-                              ON b.id = g.id
-                              LEFT JOIN already_downloaded_images d
-                              ON b.id = d.waterbody_id
-                              --WHERE b.id = 9725
-                              WHERE b.areasqkm < 900
-                              order by b.areasqkm desc
-                              LIMIT 2000;""", 
-                              con=engine.connect()
-                        )
-
-water_bodies_df = water_bodies_df[["id", "areasqkm", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude", "geometry", "exclude_ee_ids"]]
-
-
-satellite_dataset_configs = [
-    # {
-    #     "ee_dataset_name": "LANDSAT/LC09/C02/T1_L2",
-    #     "bands": (
-    #         ImageBand('SR_B4', 'red', 0.0000275, -0.2), 
-    #         ImageBand('SR_B3', 'green', 0.0000275, -0.2), 
-    #         ImageBand('SR_B2', 'blue', 0.0000275, -0.2),
-    #     )
-    # },
-    {
-        "ee_dataset_name": "COPERNICUS/S2_SR_HARMONIZED",
-        "ee_filter": ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20),
-        "bands": (
-            ImageBand('TCI_R', 'red'), 
-            ImageBand('TCI_G', 'green'), 
-            ImageBand('TCI_B', 'blue'),
-        )
-    }
-]
-
-end_date = datetime.date.today()
-start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
-
 def run_image_query(row):
     for dataset_config in satellite_dataset_configs:
 
@@ -464,7 +440,7 @@ def run_image_query(row):
 
         images = image_query.get_image_list()
 
-        for image in images[:1]:
+        for image in images:
             image.download_layers()
             image.combine_image_layers()
             image.run_image_calculations()
@@ -478,17 +454,54 @@ def run_image_query(row):
                 stmt = stmt.on_conflict_do_nothing()
                 result = conn.execute(stmt)
 
-futures = []
-with ThreadPoolExecutor(max_workers=5) as executor:
-    for i, row in water_bodies_df.iterrows():
-        futures.append(
-            executor.submit(run_image_query, row)
-        )
-        # run_image_query(row)
+def main():
 
-for future in futures:
-    print(
-        future.result()
-    )
+    # https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2#bands
 
-    
+    water_bodies_table_name = "water_bodies"
+
+    water_bodies_df = pd.read_sql(sql=f"""
+                                WITH already_downloaded_images AS (
+                                    SELECT waterbody_id, ARRAY_AGG(ee_id) as exclude_ee_ids
+                                    FROM waterbody_satellite_images
+                                    --WHERE time filter
+                                    GROUP BY waterbody_id
+                                )
+                                
+                                SELECT b.*, g.geometry, d.exclude_ee_ids
+                                FROM {water_bodies_table_name} b
+                                LEFT JOIN water_body_geometries g
+                                ON b.id = g.id
+                                LEFT JOIN already_downloaded_images d
+                                ON b.id = d.waterbody_id
+                                --WHERE b.id = 4342 --9725
+                                WHERE b.areasqkm < {area_limit}
+                                order by b.areasqkm desc
+                                LIMIT {waterbody_limit};""", 
+                                con=engine.connect()
+                            )
+
+    water_bodies_df = water_bodies_df[["id", "areasqkm", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude", "geometry", "exclude_ee_ids"]]
+
+
+
+
+
+    futures = []
+    with ThreadPoolExecutor(max_workers=PARALLELISM) as executor:
+        for i, row in water_bodies_df.iterrows():
+            futures.append(
+                executor.submit(run_image_query, row)
+            )
+            # run_image_query(row)
+
+    for future in futures:
+        res = future.result()
+        if res is not None:
+            print(
+                future.result()
+            )
+
+
+if __name__ == "__main__":
+    main()
