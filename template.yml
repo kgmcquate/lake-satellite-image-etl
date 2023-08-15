@@ -136,20 +136,3 @@ Resources:
           ]
         }
 
-  BaseECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: "emr-610/python-311"
-      RepositoryPolicyText: {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "Emr Serverless Custom Image Support",
-              "Effect": "Allow",
-              "Principal": "*",
-              "Action": [
-                "ecr:*"
-              ]
-            }
-          ]
-        }
