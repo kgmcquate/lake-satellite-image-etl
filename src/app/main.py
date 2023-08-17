@@ -365,7 +365,7 @@ class GoogleEarthImageQuery:
     bands: "tuple[ImageBand]"
     ee_filter: ee.Filter = None
 
-    images: tuple[GoogleEarthImage] = None
+    images: "tuple[GoogleEarthImage]" = None
 
     # api_url: ClassVar[str] = 'earthengine.googleapis.com/v1alpha/projects/earthengine-public/assets/COPERNICUS/S2'
 
