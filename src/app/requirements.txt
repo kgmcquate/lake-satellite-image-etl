@@ -10,4 +10,3 @@ pyarrow
 rasterio
 psycopg2-binary
 sqlalchemy
-sqlmodel

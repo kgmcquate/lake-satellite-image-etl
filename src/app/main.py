@@ -15,7 +15,7 @@ import boto3
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 from sqlalchemy.dialects.postgresql import insert
-from sqlmodel import SQLModel, Field
+# from sqlmodel import SQLModel, Field
 
 from pprint import pprint
 
@@ -105,12 +105,12 @@ class GoogleEarthImageLayer:
     clipped_image: DatasetReader = None
 
 
+@dataclass
+class WaterBodySatelliteImage:    
+    # __tablename__ = "waterbody_satellite_images"
 
-class WaterBodySatelliteImage(SQLModel, table=True):    
-    __tablename__ = "waterbody_satellite_images"
-
-    waterbody_id: int = Field(primary_key=True)
-    captured_ts: datetime.datetime = Field(primary_key=True)
+    waterbody_id: int 
+    captured_ts: datetime.datetime
     ee_id: str 
     satellite_dataset: str
     properties: str
