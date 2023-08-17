@@ -27,7 +27,6 @@ import ee
 
 import zipfile
 from pprint import pprint
-# https://api.nasa.gov/
 
 from typing import ClassVar, Callable
 
@@ -35,6 +34,7 @@ LOOKBACK_DAYS = 800
 IMAGE_STORAGE_BUCKET = "public-zone-117819748843-us-east-1"
 IMAGE_STORAGE_PREFIX = "water_body_satellite_images/"
 THUMBNAIL_STORAGE_PREFIX = "water_body_satellite_thumbnails/"
+SATELLITE_IMAGE_TABLE = "waterbody_satellite_images"
 MAX_IMAGE_SIDE_PIXELS = "2100"
 THUMBNAIL_SCALE_FACTOR = 7
 IMAGE_NODATA_VALUE = int(0)
@@ -450,7 +450,7 @@ def run_image_query(row):
             table_record = image.to_image_reference()
 
             with engine.connect() as conn:
-                stmt = insert(WaterBodySatelliteImage).values(table_record.dict())
+                stmt = insert(SATELLITE_IMAGE_TABLE).values(table_record.dict())
                 stmt = stmt.on_conflict_do_nothing()
                 result = conn.execute(stmt)
 
