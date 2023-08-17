@@ -1,7 +1,8 @@
 boto3
 urllib3
 numpy
-pandas
+pandas==1.1.5
+sqlalchemy==1.4.45
 earthengine-api
 shapely
 requests
@@ -9,4 +10,3 @@ google-auth
 pyarrow
 rasterio
 psycopg2-binary
-sqlalchemy
