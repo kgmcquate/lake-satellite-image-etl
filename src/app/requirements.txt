@@ -1,6 +1,7 @@
 boto3
 urllib3
 numpy
+Pillow
 pandas==1.1.5
 sqlalchemy==1.4.45
 earthengine-api

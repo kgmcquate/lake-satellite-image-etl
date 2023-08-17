@@ -1,4 +1,4 @@
-FROM public.ecr.aws/emr-serverless/spark/emr-6.10.0:latest
+FROM public.ecr.aws/emr-serverless/spark/emr-6.12.0:latest
 
 USER root
 

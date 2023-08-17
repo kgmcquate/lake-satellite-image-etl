@@ -11,6 +11,7 @@ import shapely
 import functools
 import io
 from rasterio.io import MemoryFile, DatasetReader
+from PIL import Image
 import boto3
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
@@ -293,8 +294,6 @@ class GoogleEarthImage:
         _, height, width = np.shape(self.image_array)
         thumbnail_width = int(width / THUMBNAIL_SCALE_FACTOR)
         thumbnail_height = int(height / THUMBNAIL_SCALE_FACTOR)
-
-        from PIL import Image
 
         self.thumbnail_tif_memfile = MemoryFile()
         with self.thumbnail_tif_memfile.open(**self.tif_profile) as tif_bytes:
