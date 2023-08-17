@@ -44,7 +44,7 @@ start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
 waterbody_limit = 1000
 area_limit = 900
 
-from database import engine
+from .database import engine
 
 # ee_key_file = "waterbodyweather-key.json"
 
