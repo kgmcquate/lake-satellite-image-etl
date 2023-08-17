@@ -1,4 +1,5 @@
 boto3
+urllib3
 numpy
 pandas
 earthengine-api
@@ -6,3 +7,6 @@ shapely
 requests
 google-auth
 pyarrow
+rasterio
+psycopg2-binary
+sqlalchemy

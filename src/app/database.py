@@ -1,7 +1,7 @@
 import json
 import os
 import boto3
-import sqlmodel
+# import sqlmodel
 import sqlalchemy
 
 secret_arn = os.environ.get("DB_CREDS_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:117819748843:secret:lake-freeze-db-creds")

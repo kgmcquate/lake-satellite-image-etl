@@ -117,6 +117,7 @@ Resources:
                                 --executor-memory 2G
                                 --executor-cores 2
                                 --conf spark.dynamicAllocation.enabled=false
+                                --conf spark.sql.execution.arrow.pyspark.enabled=true
                                 --jars https://repo1.maven.org/maven2/org/postgresql/postgresql/42.6.0/postgresql-42.6.0.jar
                               "
                         }
