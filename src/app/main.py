@@ -455,7 +455,6 @@ def run_image_query(row):
                 result = conn.execute(stmt)
 
 def main():
-
     # https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2#bands
 
     water_bodies_table_name = "water_bodies"
