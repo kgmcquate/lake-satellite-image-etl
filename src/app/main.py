@@ -47,7 +47,10 @@ start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
 waterbody_limit = 1100
 area_limit = 900
 
-from .database import engine
+try:
+    from .database import engine
+except:
+    from database import engine
 
 # ee_key_file = "waterbodyweather-key.json"
 
@@ -463,7 +466,8 @@ def run_image_query(row):
                 stmt = insert(WaterBodySatelliteImage).values(table_record.dict())
                 stmt = stmt.on_conflict_do_nothing()
                 result = conn.execute(stmt)
-                print(f"query result: {result}")
+                conn.commit()
+                
 
 def main():
     import sys
@@ -500,10 +504,10 @@ def main():
     futures = []
     with ThreadPoolExecutor(max_workers=PARALLELISM) as executor:
         for i, row in water_bodies_df.iterrows():
-            # futures.append(
-            #     executor.submit(run_image_query, row)
-            # )
-            run_image_query(row)
+            futures.append(
+                executor.submit(run_image_query, row)
+            )
+            # run_image_query(row)
 
     for future in futures:
         res = future.result()
@@ -515,3 +519,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
