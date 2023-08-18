@@ -6,7 +6,7 @@ USER root
 COPY ./src/app/requirements.txt ./requirements.txt
 
 COPY ./dist/* ./dist/
-
+RUN /usr/local/bin/python3.11 -m pip install --upgrade pip
 RUN /usr/local/bin/python3.11 -m pip install -r ./requirements.txt 
 RUN /usr/local/bin/python3.11 -m pip install ./dist/*
 
