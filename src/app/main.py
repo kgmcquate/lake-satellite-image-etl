@@ -115,14 +115,15 @@ class WaterBodySatelliteImage(SQLModel):
 
     waterbody_id: int = Field(primary_key=True)
     captured_ts: datetime.datetime = Field(primary_key=True)
+    ee_id: str 
     satellite_dataset: str
-    ee_id: str
     properties: str
     filename: str
     thumbnail_filename: str
     red_average: float
     green_average: float
     blue_average: float
+    white_fraction: float
 
 
 @dataclass
@@ -466,6 +467,8 @@ def run_image_query(row):
                 result = conn.execute(stmt)
 
 def main():
+    import sys
+    print(sys.version)
     # https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC09_C02_T1_L2#bands
 
     water_bodies_table_name = "water_bodies"
@@ -497,10 +500,10 @@ def main():
     futures = []
     with ThreadPoolExecutor(max_workers=PARALLELISM) as executor:
         for i, row in water_bodies_df.iterrows():
-            futures.append(
-                executor.submit(run_image_query, row)
-            )
-            # run_image_query(row)
+            # futures.append(
+            #     executor.submit(run_image_query, row)
+            # )
+            run_image_query(row)
 
     for future in futures:
         res = future.result()
@@ -511,7 +514,6 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-    print(sys.version)
+
 
     main()
