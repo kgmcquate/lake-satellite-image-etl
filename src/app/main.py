@@ -106,10 +106,6 @@ class GoogleEarthImageLayer:
     image_array: np.ndarray = None
     clipped_image: DatasetReader = None
 
-from sqlalchemy import String, Integer
-from sqlalchemy.orm import Mapped
-
-
 class WaterBodySatelliteImage(SQLModel):    
     __tablename__ = "waterbody_satellite_images"
 
@@ -514,6 +510,4 @@ def main():
 
 
 if __name__ == "__main__":
-
-
     main()

@@ -1,7 +1,7 @@
 import json
 import os
 import boto3
-# import sqlmodel
+import sqlmodel
 import sqlalchemy
 
 secret_arn = os.environ.get("DB_CREDS_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:117819748843:secret:lake-freeze-db-creds")
@@ -26,7 +26,6 @@ connectorx_url = f"postgresql://{db_username}:{db_password}@{db_endpoint}:5432/p
 
 
 # print("creating engine")
-engine = sqlalchemy.create_engine(jdbc_url) #/lake_freeze
-
+engine = sqlmodel.create_engine(jdbc_url) #/lake_freeze
 
 
