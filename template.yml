@@ -78,9 +78,9 @@ Resources:
         Enabled: true
         IdleTimeoutMinutes: 1
       MaximumCapacity: 
-        Cpu: 4vCPU
+        Cpu: 16vCPU
         Disk: 100GB
-        Memory: 16GB
+        Memory: 64GB
       ReleaseLabel: "emr-6.12.0"
       Type: Spark
       ImageConfiguration:
@@ -111,8 +111,8 @@ Resources:
                         "SparkSubmit": {
                             "EntryPoint": !Sub "s3://${DeploymentZone}/satellite_image_etl/spark_entrypoint.py",
                             "SparkSubmitParameters": !Sub "
-                                --driver-memory 2G 
-                                --driver-cores 2 
+                                --driver-memory 16G 
+                                --driver-cores 10 
                                 --num-executors 1 
                                 --executor-memory 2G
                                 --executor-cores 2

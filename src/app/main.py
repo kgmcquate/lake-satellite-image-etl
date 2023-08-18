@@ -31,7 +31,7 @@ from pprint import pprint
 
 from typing import ClassVar, Callable
 
-LOOKBACK_DAYS = 800
+LOOKBACK_DAYS = 30
 IMAGE_STORAGE_BUCKET = "public-zone-117819748843-us-east-1"
 IMAGE_STORAGE_PREFIX = "water_body_satellite_images/"
 THUMBNAIL_STORAGE_PREFIX = "water_body_satellite_thumbnails/"
@@ -44,7 +44,7 @@ check_existing_images = True
 
 end_date = datetime.date.today()
 start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
-waterbody_limit = 1000
+waterbody_limit = 1100
 area_limit = 900
 
 from .database import engine
@@ -106,7 +106,8 @@ class GoogleEarthImageLayer:
     image_array: np.ndarray = None
     clipped_image: DatasetReader = None
 
-class WaterBodySatelliteImage(SQLModel):    
+
+class WaterBodySatelliteImage(SQLModel, table=True):    
     __tablename__ = "waterbody_satellite_images"
 
     waterbody_id: int = Field(primary_key=True)
@@ -146,6 +147,8 @@ class GoogleEarthImage:
 
     def __post_init__(self):
         filename = f"{self.ee_id}/{self.query.id}_{self.captured_ts.strftime('%Y%M%d%H%m%S')}"
+
+        print(f"creating {filename}")
 
         self.image_filename = f"{filename}.tif"
         self.thumbnail_filename = f"{filename}_thumbnail.png"
@@ -393,6 +396,8 @@ class GoogleEarthImageQuery:
 
         self.ee_boundary = ee.Geometry.Polygon(self.boundary.__geo_interface__['coordinates'])
 
+        print(f"Initialized {self.id}")
+
     
     def get_image_list(self):
 
@@ -407,14 +412,19 @@ class GoogleEarthImageQuery:
         if self.ee_filter:
             img_collection = img_collection.filter(self.ee_filter)
 
-        if img_collection.getInfo() is None:
+        # print(img_collection.getInfo())
+
+        info = img_collection.getInfo()
+        if info is None:
             raise Exception(f"No images found for {self}")
 
         self.images: list[GoogleEarthImage] = []
-        for img in img_collection.getInfo()['features']:
+        for img in info['features']:
             # Exclude ee ids that already have been downloaded
-            if not check_existing_images or img['id'] not in self.exclude_ee_ids:
+            if not check_existing_images or img['id'] not in self.exclude_ee_ids: #not check_existing_images or 
                 capture_ts_unix = int(int(img['properties']['system:time_start']) / 1000)
+
+                print(datetime.datetime.fromtimestamp(capture_ts_unix))
 
                 self.images.append(
                     GoogleEarthImage(
@@ -449,14 +459,6 @@ def run_image_query(row):
 
             table_record = image.to_image_reference()
 
-            
-
-            # sql = f"""
-            #     INSERT INTO waterbody_satellite_images (properties, waterbody_id, captured_ts, satellite_dataset, ee_id, filename, thumbnail_filename, red_average, green_average, blue_average, white_fraction)
-            #     VALUES ({})
-            # """
-            # waterbody_satellite_images
-
             with engine.connect() as conn:
                 stmt = insert(WaterBodySatelliteImage).values(table_record.dict())
                 stmt = stmt.on_conflict_do_nothing()
@@ -473,7 +475,7 @@ def main():
                                 WITH already_downloaded_images AS (
                                     SELECT waterbody_id, ARRAY_AGG(ee_id) as exclude_ee_ids
                                     FROM waterbody_satellite_images
-                                    --WHERE time filter
+                                    WHERE captured_ts >= '{start_date.isoformat()}'::DATE
                                     GROUP BY waterbody_id
                                 )
                                 
@@ -492,14 +494,15 @@ def main():
 
     water_bodies_df = water_bodies_df[["id", "areasqkm", "min_longitude", "max_longitude", "min_latitude", "max_latitude", "latitude", "longitude", "geometry", "exclude_ee_ids"]]
 
+    print(water_bodies_df)
 
     futures = []
     with ThreadPoolExecutor(max_workers=PARALLELISM) as executor:
         for i, row in water_bodies_df.iterrows():
-            # futures.append(
-            #     executor.submit(run_image_query, row)
-            # )
-            run_image_query(row)
+            futures.append(
+                executor.submit(run_image_query, row)
+            )
+            # run_image_query(row)
 
     for future in futures:
         res = future.result()
