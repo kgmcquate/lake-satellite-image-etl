@@ -15,5 +15,7 @@ RUN python3.11 -V
 RUN python3.11 -m pip install -r ./requirements.txt 
 RUN python3.11 -m pip install ./dist/*
 
+# RUN python3.11 -c "from sqlmodel import SQLModel, Field"
+
 # EMRS will run the image as hadoop
 USER hadoop:hadoop
