@@ -4,16 +4,21 @@ FROM public.ecr.aws/emr-serverless/spark/emr-6.12.0:latest
 USER root
 
 # install python 3
-RUN yum install -y gcc openssl-devel bzip2-devel libffi-devel tar gzip wget make
-RUN wget https://www.python.org/ftp/python/3.11.4/Python-3.11.4.tgz && \
+RUN yum update -y && \
+    yum erase openssl-devel -y && \
+    yum install openssl11 openssl11-devel libffi-devel bzip2-devel wget -y && \
+    wget https://www.python.org/ftp/python/3.11.4/Python-3.11.4.tgz && \
     tar xzf Python-3.11.4.tgz && cd Python-3.11.4 && \
     ./configure && \
-    make altinstall  && \
+    make -j $(nproc) && \
+    make altinstall && \
     cd .. && \
     rm Python-3.11.4.tgz && rm -rf Python-3.11.4/
 
     
-    # yum remove -y gcc openssl-devel bzip2-devel libffi-devel tar wget make && \
+# RUN python3.11 -m pip install --upgrade pip
+
+RUN yum install python3-pip
 
 ENV PYSPARK_DRIVER_PYTHON=/usr/local/bin/python3.11
 ENV DRIVER_PYTHON=/usr/local/bin/python3.11
