@@ -111,8 +111,8 @@ Resources:
                         "SparkSubmit": {
                             "EntryPoint": !Sub "s3://${DeploymentZone}/satellite_image_etl/spark_entrypoint.py",
                             "SparkSubmitParameters": !Sub "
-                                --driver-memory 16G 
-                                --driver-cores 10 
+                                --driver-memory 14G 
+                                --driver-cores 4
                                 --num-executors 1 
                                 --executor-memory 2G
                                 --executor-cores 2
