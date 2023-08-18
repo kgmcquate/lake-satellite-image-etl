@@ -2,8 +2,9 @@ boto3
 urllib3
 numpy
 Pillow
-pandas
-sqlalchemy
+pandas==1.1.5
+sqlalchemy==1.4.45
+sqlmodel
 earthengine-api
 shapely
 requests
