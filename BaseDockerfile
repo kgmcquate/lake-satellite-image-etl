@@ -1,0 +1,21 @@
+FROM public.ecr.aws/emr-serverless/spark/emr-6.12.0:latest
+# public.ecr.aws/emr-serverless/spark/emr-6.12.0:20230713-arm64
+
+USER root
+
+# install python 3
+RUN yum install -y gcc openssl-devel bzip2-devel libffi-devel tar gzip wget make
+RUN wget https://www.python.org/ftp/python/3.11.4/Python-3.11.4.tgz && \
+    tar xzf Python-3.11.4.tgz && cd Python-3.11.4 && \
+    ./configure --enable-optimizations && \
+    make altinstall  && \
+    cd .. && \
+    yum remove -y gcc openssl-devel bzip2-devel libffi-devel tar wget make && \
+    rm Python-3.11.4.tgz && rm -rf Python-3.11.4/
+
+ENV PYSPARK_DRIVER_PYTHON=/usr/local/bin/python3.11
+ENV DRIVER_PYTHON=/usr/local/bin/python3.11
+ENV PYSPARK_PYTHON=/usr/local/bin/python3.11
+
+# EMRS will run the image as hadoop
+USER hadoop:hadoop

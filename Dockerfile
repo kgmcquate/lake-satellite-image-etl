@@ -1,4 +1,5 @@
-FROM public.ecr.aws/emr-serverless/spark/emr-6.12.0:latest
+# FROM public.ecr.aws/emr-serverless/spark/emr-6.12.0:latest
+FROM 117819748843.dkr.ecr.us-east-1.amazonaws.com/emr-serverless:latest
 
 USER root
 
@@ -6,15 +7,8 @@ COPY ./src/app/requirements.txt ./requirements.txt
 
 COPY ./dist/* ./dist/
 
-# install python 3
-# RUN yum install -y gcc openssl-devel bzip2-devel libffi-devel tar gzip wget make
-# RUN wget https://www.python.org/ftp/python/3.9.0/Python-3.10.0.tgz && \
-#     tar xzf Python-3.10.0.tgz && cd Python-3.9.0 && \
-#     ./configure --enable-optimizations && \
-#     make altinstall
-
-RUN pip3 install -r ./requirements.txt 
-RUN pip3 install ./dist/*
+RUN /usr/local/bin/python3.11 -m pip install -r ./requirements.txt 
+RUN /usr/local/bin/python3.11 -m pip install ./dist/*
 
 # EMRS will run the image as hadoop
 USER hadoop:hadoop
