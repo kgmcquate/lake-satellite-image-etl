@@ -399,8 +399,6 @@ class GoogleEarthImageQuery:
 
         self.ee_boundary = ee.Geometry.Polygon(self.boundary.__geo_interface__['coordinates'])
 
-        print(f"Initialized {self.id}")
-
     
     def get_image_list(self):
 
