@@ -36,9 +36,9 @@ jobs:
           access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           account_id: ${{ env.AWS_ACCOUNT_ID }}
-          repo: satellite-image-etl/pyspark-env
+          repo: emr-serverless
           region: ${{ env.AWS_REGION }}
-          tags: latest
+          tags: satellite-image-etl
           create_repo: false
          
 
