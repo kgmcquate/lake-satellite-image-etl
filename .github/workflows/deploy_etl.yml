@@ -7,6 +7,8 @@ on:
 env:
   AWS_REGION: "us-east-1"
   AWS_ACCOUNT_ID: "117819748843"
+  AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}"
+  AWS_SECRET_ACCESS_KEY: "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
 
 permissions:
   contents: read
@@ -21,14 +23,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+        uses: taiki-e/checkout-action@v1
 
       - name: Build python package
         run: |
@@ -50,7 +45,7 @@ jobs:
 
       - name: Copy Python files to S3 deployment zone
         run: |
-          aws s3 cp spark_entrypoint.py s3://deployment-zone-${AWS_ACCOUNT_ID}/satellite_image_etl/
+          aws s3 cp spark_entrypoint.py s3://deployment-zone-${AWS_ACCOUNT_ID}-${AWS_REGION}/satellite_image_etl/
 
   deploy_sam:
     name: Deploy SAM template
@@ -82,42 +77,7 @@ jobs:
         --stack-name satellite-image-etl
         --region ${AWS_REGION}
         --capabilities CAPABILITY_AUTO_EXPAND
-        --s3-bucket deployment-zone-${AWS_ACCOUNT_ID}
+        --s3-bucket deployment-zone-${AWS_ACCOUNT_ID}-${AWS_REGION}
         --s3-prefix ${{ github.event.repository.name }}
-
-  # deploy_base_image:
-  #   name: Deploy base docker image
-  #   on:
-  #     push:
-  #       paths:
-  #         - 'BaseDockerfile'
-  #   runs-on: ubuntu-latest
-  #   environment: production
-  #   container:
-  #     image: public.ecr.aws/sam/build-python3.9:latest
-
-  #   steps:
-  #   - name: Checkout
-  #     uses: actions/checkout@v3
-
-  #   - name: Configure AWS credentials
-  #     uses: aws-actions/configure-aws-credentials@v1
-  #     with:
-  #       aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  #       aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  #       aws-region: ${{ env.AWS_REGION }}
-
-  #   - name: build and push
-  #     uses: vitr/actions-build-and-upload-to-ecs@master
-  #     with:
-  #       dockerfile: BaseDockerfile
-  #       access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  #       secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  #       account_id: ${{ env.AWS_ACCOUNT_ID }}
-  #       repo: emr-serverless
-  #       region: ${{ env.AWS_REGION }}
-  #       tags: latest,python_311-emrs-6_12_0
-  #       create_repo: false
-
 
 

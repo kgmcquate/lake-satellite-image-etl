@@ -4,11 +4,11 @@ Transform: AWS::Serverless-2016-10-31
 Parameters:
   ExecutionRoleArn:
     Type: String
-    Default: arn:aws:iam::117819748843:role/lake-freeze-lambda-role
+    Default: arn:aws:iam::117819748843:role/service-role
 
   DeploymentZone:
     Type: String
-    Default: deployment-zone-117819748843
+    Default: deployment-zone-117819748843-us-east-1
 
   EmrZone:
     Type: String
@@ -16,7 +16,7 @@ Parameters:
 
   DockerImageUri:
     Type: String
-    Default: 117819748843.dkr.ecr.us-east-1.amazonaws.com/satellite-image-etl/pyspark-env:latest
+    Default: 117819748843.dkr.ecr.us-east-1.amazonaws.com/emr-serverless:satellite-image-etl
 
   SecurityGroupIds:
     Type: CommaDelimitedList
@@ -27,33 +27,11 @@ Parameters:
     Default: subnet-0cdc957115446f72d
 
 Resources:
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: "satellite-image-etl/pyspark-env"
-      RepositoryPolicyText: {
-          "Version": "2012-10-17",
-          "Statement": [
-            {
-              "Sid": "Emr Serverless Custom Image Support",
-              "Effect": "Allow",
-              "Principal": {
-                "Service": "emr-serverless.amazonaws.com"
-              },
-              "Action": [
-                "ecr:BatchGetImage",
-                "ecr:DescribeImages",
-                "ecr:GetDownloadUrlForLayer"
-              ]
-            }
-          ]
-        }
-
   ETLJobTrigger:
     Type: AWS::Events::Rule
     Properties: 
       # Description: String
-      Name: SatelliteImageETLJobTrigger
+      Name: satellite-image-etl-trigger
       RoleArn: !Ref ExecutionRoleArn
       ScheduleExpression: "cron(0 6 * * ? *)"
       State: ENABLED
@@ -68,7 +46,6 @@ Resources:
 
   EMRServerlessApplication:
     Type: AWS::EMRServerless::Application
-    DependsOn: ECRRepository
     Properties: 
       Name: SatelliteImageETLApplication
       Architecture: X86_64
@@ -93,7 +70,7 @@ Resources:
   StepFunctionStateMachine:
     Type: AWS::StepFunctions::StateMachine
     Properties:
-      StateMachineName: EMRSatelliteImageETLJobStateMachine
+      StateMachineName: satellite-image-etl
       RoleArn: !Ref ExecutionRoleArn
       Definition: {
             "Comment": "Runs EMR Serverless job for Satellite Image ETL",
