@@ -65,10 +65,8 @@ jobs:
         sam deploy 
         --no-fail-on-empty-changeset
         --on-failure DELETE
-        --stack-name satellite-image-etl
+        --stack-name satellite-image-etl-stack
         --region ${AWS_REGION}
         --capabilities CAPABILITY_AUTO_EXPAND
         --s3-bucket deployment-zone-${AWS_ACCOUNT_ID}-${AWS_REGION}
         --s3-prefix ${{ github.event.repository.name }}
-
-
