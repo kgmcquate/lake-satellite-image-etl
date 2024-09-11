@@ -12,7 +12,7 @@ Parameters:
 
   EmrZone:
     Type: String
-    Default: emr-zone-117819748843-us-east-1
+    Default: log-zone-117819748843-us-east-1
 
   DockerImageUri:
     Type: String
