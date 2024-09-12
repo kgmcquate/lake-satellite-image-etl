@@ -58,7 +58,7 @@ Resources:
         Cpu: 16vCPU
         Disk: 100GB
         Memory: 64GB
-      ReleaseLabel: "emr-6.12.0"
+      ReleaseLabel: "emr-7.2.0"
       Type: Spark
       ImageConfiguration:
         ImageUri: !Ref DockerImageUri
