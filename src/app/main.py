@@ -44,7 +44,7 @@ check_existing_images = True
 
 end_date = datetime.date.today()
 start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
-waterbody_limit = 1100
+waterbody_limit = 3 #1100
 area_limit = 900
 
 from .database import engine
