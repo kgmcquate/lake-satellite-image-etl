@@ -47,17 +47,7 @@ start_date = datetime.date.today() - datetime.timedelta(days=LOOKBACK_DAYS)
 waterbody_limit = 1100
 area_limit = 900
 
-try:
-    from .database import engine
-except:
-    from database import engine
-
-# ee_key_file = "waterbodyweather-key.json"
-
-# with open(ee_key_file, "r") as f:
-#     key_data = f.read()
-
-# ""
+from .database import engine
 
 secret_arn = os.environ.get("DB_CREDS_SECRET_ARN", "arn:aws:secretsmanager:us-east-1:117819748843:secret:google-earth-engine-api-key")
 
