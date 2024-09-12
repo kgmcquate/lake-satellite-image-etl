@@ -335,10 +335,10 @@ class GoogleEarthImage:
             properties=json.dumps(self.properties),
             filename=self.image_filename,
             thumbnail_filename=self.thumbnail_filename,
-            red_average=self.image_channel_means[0],
-            green_average=self.image_channel_means[1],
-            blue_average=self.image_channel_means[2],
-            white_fraction=self.white_fraction
+            red_average=float(self.image_channel_means[0]),
+            green_average=float(self.image_channel_means[1]),
+            blue_average=float(self.image_channel_means[2]),
+            white_fraction=float(self.white_fraction)
         )
 
 
